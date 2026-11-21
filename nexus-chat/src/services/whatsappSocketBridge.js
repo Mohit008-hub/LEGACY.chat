@@ -14,6 +14,7 @@ class WhatsAppSocketBridgeService {
     this.supabase = null;
     this.listeners = {
       qrUpdate: new Set(),
+      pairingCode: new Set(),
       connectionState: new Set(),
       incomingMessage: new Set(),
       messageRevokeAttempt: new Set(),
@@ -23,6 +24,7 @@ class WhatsAppSocketBridgeService {
 
     this.connectionState = 'DISCONNECTED'; // DISCONNECTED, GENERATING_QR, QR_READY, AUTHENTICATING, SYNCING_CHATS, CONNECTED
     this.currentQr = null;
+    this.currentPairingCode = null;
     this.isSandbox = true;
     this.init();
   }
@@ -81,6 +83,7 @@ class WhatsAppSocketBridgeService {
       });
 
       this.socket.on('connect', () => {
+        this.isSandbox = false;
         this.emitStateChange({ status: 'AUTHENTICATING' });
         this.socket.emit('request_qr');
       });
@@ -89,6 +92,11 @@ class WhatsAppSocketBridgeService {
         this.currentQr = data.qr;
         this.emitQrUpdate(data.qr);
         this.emitStateChange({ status: 'QR_READY', qr: data.qr });
+      });
+
+      this.socket.on('pairing_code', (data) => {
+        this.currentPairingCode = data.code;
+        this.notifyListeners('pairingCode', data.code);
       });
 
       this.socket.on('connection_state', (data) => {
@@ -113,7 +121,6 @@ class WhatsAppSocketBridgeService {
       });
 
       this.socket.on('connect_error', () => {
-        // Graceful switch to sandbox warning without throwing unhandled exceptions
         this.isSandbox = true;
         this.emitStateChange({ status: 'DISCONNECTED', error: 'Bridge server unreachable. Operating in Sandbox.' });
       });
@@ -155,6 +162,12 @@ class WhatsAppSocketBridgeService {
     return () => this.listeners.qrUpdate.delete(callback);
   }
 
+  onPairingCode(callback) {
+    this.listeners.pairingCode.add(callback);
+    if (this.currentPairingCode) callback(this.currentPairingCode);
+    return () => this.listeners.pairingCode.delete(callback);
+  }
+
   onConnectionState(callback) {
     this.listeners.connectionState.add(callback);
     callback({ status: this.connectionState, isSandbox: this.isSandbox });
@@ -181,7 +194,6 @@ class WhatsAppSocketBridgeService {
     return () => this.listeners.chatOpened.delete(callback);
   }
 
-  // Notify listeners helper
   notifyListeners(event, payload) {
     if (this.listeners[event]) {
       this.listeners[event].forEach((cb) => {
@@ -208,7 +220,6 @@ class WhatsAppSocketBridgeService {
     this.notifyListeners('qrUpdate', qr);
   }
 
-  // Send message
   sendMessage({ to, text, senderId = 'user_self' }) {
     const messageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
     const msgObj = {
@@ -228,13 +239,24 @@ class WhatsAppSocketBridgeService {
     return msgObj;
   }
 
-  // Manual Trigger & Simulation Methods for testing God Mode
+  requestPairingCode(phoneNumber) {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('request_pairing_code', { phoneNumber });
+    } else {
+      // Sandbox fallback demo pairing code
+      setTimeout(() => {
+        const dummyCode = `${Math.random().toString(36).substring(2, 6).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+        this.currentPairingCode = dummyCode;
+        this.notifyListeners('pairingCode', dummyCode);
+      }, 500);
+    }
+  }
+
   simulateEvent(type, data) {
     if (this.socket && this.socket.connected) {
       this.socket.emit('simulate_event', { type, data });
     }
 
-    // Always dispatch locally in frontend for instantaneous response
     if (type === 'chat_open') {
       this.notifyListeners('chatOpened', data);
     } else if (type === 'live_draft') {

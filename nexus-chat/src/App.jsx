@@ -588,6 +588,7 @@ export default function App() {
         onDisconnect={handleDisconnect}
         isSandbox={isSandbox}
         theme={theme}
+        onOpenSettingsModal={() => setIsSettingsModalOpen(true)}
       />
 
       {/* Connection & Cloud Settings Modal */}
